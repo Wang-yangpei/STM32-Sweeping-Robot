@@ -75,7 +75,7 @@ void Navi_Update(void)
     
     int out_L = (int)PID_Calc(&pid_left, current_L);
     int out_R = (int)PID_Calc(&pid_right, current_R);
-    //Motor_SetSpeed(out_L, out_R);
+    Motor_SetSpeed(out_L, out_R);
 
 }
 
