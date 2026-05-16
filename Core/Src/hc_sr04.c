@@ -1,82 +1,57 @@
 #include "hc_sr04.h"
 #include "motor.h"
 
-void HCSR04_Init(void)
-{
-    HAL_TIM_Base_Start(&htim3);
-}
-
+void HCSR04_Init(void) { HAL_TIM_Base_Start(&htim3); }
 
 // 1. 微秒级延时函数 (利用 TIM3)
-void delay_us(uint16_t us) 
+void delay_us(uint16_t us)
 {
-    __HAL_TIM_SET_COUNTER(&htim3, 0); // 秒表清零
-    while (__HAL_TIM_GET_COUNTER(&htim3) < us); // 死等
+  __HAL_TIM_SET_COUNTER(&htim3, 0); // 秒表清零
+  while (__HAL_TIM_GET_COUNTER(&htim3) < us)
+    ; // 死等
 }
 
 // 2. 超声波测距核心函数
-float HCSR04_Read(void) 
+float HCSR04_Read(void)
 {
-    uint32_t local_time = 0;
-    float distance = 0;
-    uint32_t timeout = 0;
+  uint32_t tickstart;
+  float distance;
 
-    // 第一步：发声 (Trig -> PB11)
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_11, GPIO_PIN_SET); 
-    delay_us(15);
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_11, GPIO_PIN_RESET);
+  // 1. 发送 15us 的高电平触发信号
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_11, GPIO_PIN_SET);
+  delay_us(15);
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_11, GPIO_PIN_RESET);
 
-    //Echo 引脚在发送瞬间会变高，在收到回声时变低
-    // 第二步：等回声开头 (Echo -> PB10)
-    while(HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_10) == GPIO_PIN_RESET) {
-        timeout++;
-        if(timeout > 100000) return 999.0; // 超时保护
+  // 2. 等待 Echo 变高电平（加入 30ms 超时防死锁）
+  tickstart = HAL_GetTick();
+  while (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_10) == GPIO_PIN_RESET)
+  {
+    if ((HAL_GetTick() - tickstart) > 30)
+    {
+      return 999.0f; // 硬件异常或超时，直接弹回安全值，保护 Task_Sensor 不卡死
     }
+  }
 
-    // 第三步：按下秒表
-    __HAL_TIM_SET_COUNTER(&htim3, 0);
+  // 3. 抓到高电平瞬间，开启秒表（硬件定时器清零）
+  __HAL_TIM_SET_COUNTER(&htim3, 0);
 
-    // 第四步：等回声结束
-    timeout = 0;
-    while(HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_10) == GPIO_PIN_SET) {
-        timeout++;
-        if(timeout > 100000) return 999.0; // 超时保护
+  // 4. 等待 Echo 变低电平（加入 30ms 超时防死锁）
+  tickstart = HAL_GetTick();
+  while (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_10) == GPIO_PIN_SET)
+  {
+    if ((HAL_GetTick() - tickstart) > 30)
+    {
+      return 999.0f; // 超出最大射程或异常
     }
+  }
 
-    // 第五步：看秒表
-    local_time = __HAL_TIM_GET_COUNTER(&htim3);
+  // 5. 抓到低电平瞬间，立刻读取微秒数
+  uint32_t raw_time = __HAL_TIM_GET_COUNTER(&htim3);
 
-    // 第六步：算距离 (厘米)
-    distance = local_time * 0.017f; 
+  // 6. 换算距离
+  distance = (float)raw_time * 0.017f;
 
-    return distance; 
+  return distance;
 }
 
-// 3. 智能避障核心任务
-void HCSR04_AvoidanceTask(void)
-{
-    float dist = HCSR04_Read(); 
-      
-    // 设定安全距离为 20 厘米
-    if (dist < 20.0f && dist > 0.0f) 
-    {
-        // 发现障碍物，触发脱困连招！
-        Robot_Stop();            
-        HAL_Delay(200);          
-        
-        Robot_MoveBackward(400); 
-        HAL_Delay(300);
-        
-        Robot_SpinLeft(500);     
-        HAL_Delay(600);          
-        
-        Robot_Stop();            
-        HAL_Delay(200);
-    }
-    else 
-    {
-        // 前方开阔，愉快扫地
-        Robot_MoveForward(450);  
-        HAL_Delay(50);           
-    }
-}
+

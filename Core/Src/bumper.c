@@ -5,47 +5,58 @@ static volatile Bumper_ID_t current_bumper_state = BUMPER_NONE;
 
 void Bumper_Init(void)
 {
-    current_bumper_state = BUMPER_NONE;
-    // 具体的 GPIO 初始化由 CubeMX 的 MX_GPIO_Init 完成，这里主要做软件状态复位
+  current_bumper_state = BUMPER_NONE;
+  // 具体的 GPIO 初始化由 CubeMX 的 MX_GPIO_Init 完成，这里主要做软件状态复位
 }
 
 // 获取当前碰撞状态
-Bumper_ID_t Bumper_GetState(void)
-{
-    return current_bumper_state;
-}
+Bumper_ID_t Bumper_GetState(void) { return current_bumper_state; }
 
 // 清除碰撞状态（脱困完成后由主程序调用）
-void Bumper_ClearState(void)
-{
-    current_bumper_state = BUMPER_NONE;
-}
+void Bumper_ClearState(void) { current_bumper_state = BUMPER_NONE; }
 
-// 弱函数：默认不执行任何操作。用户需要在 main.c 中重写此函数
+// 弱函数：默认不执行任何操作。用户需要重写函数
 __weak void Bumper_EventCallback(Bumper_ID_t id)
 {
-    // 防止编译器报“未使用变量”的警告
-    (void)id; 
+  // 防止编译器报“未使用变量”的警告
+  (void)id;
 }
 
 // 核心中断处理逻辑（放在 HAL_GPIO_EXTI_Callback 中调用）
 void Bumper_EXTI_Handler(uint16_t GPIO_Pin)
 {
-    Bumper_ID_t trigger_id = BUMPER_NONE;
+  // 静态变量记录上一次触发的时间
+  static uint32_t last_trigger_time = 0;
+  uint32_t current_time = HAL_GetTick();
 
-    // 判断是哪一个引脚触发了中断
-    if (GPIO_Pin == BUMPER_LEFT_Pin) {
-        trigger_id = BUMPER_LEFT;
-    } else if (GPIO_Pin == BUMPER_FRONT_Pin) {
-        trigger_id = BUMPER_FRONT;
-    } else if (GPIO_Pin == BUMPER_RIGHT_Pin) {
-        trigger_id = BUMPER_RIGHT;
-    }
+  // 防抖逻辑：如果两次中断触发的间隔小于 20ms，直接判定为金属弹片抖动，忽略不计
+  // 保护 FreeRTOS 内核不被按键抖动产生的海量中断给淹没
+  if ((current_time - last_trigger_time) < 20)
+  {
+    return;
+  }
+  last_trigger_time = current_time; // 更新触发时间
 
-    // 如果确实是微动开关触发的
-    if (trigger_id != BUMPER_NONE) 
-    {
-        current_bumper_state |= trigger_id; // 记录状态（支持多个同时按下）
-        Bumper_EventCallback(trigger_id);   // 抛出事件给应用层
-    }
+  Bumper_ID_t trigger_id = BUMPER_NONE;
+
+  // 判断是哪一个引脚触发了中断
+  if (GPIO_Pin == BUMPER_LEFT_Pin)
+  {
+    trigger_id = BUMPER_LEFT;
+  }
+  else if (GPIO_Pin == BUMPER_FRONT_Pin)
+  {
+    trigger_id = BUMPER_FRONT;
+  }
+  else if (GPIO_Pin == BUMPER_RIGHT_Pin)
+  {
+    trigger_id = BUMPER_RIGHT;
+  }
+
+  // 如果确实是微动开关触发的
+  if (trigger_id != BUMPER_NONE)
+  {
+    current_bumper_state |= trigger_id; // 记录状态
+    Bumper_EventCallback(trigger_id);   // 抛出事件给应用层
+  }
 }
